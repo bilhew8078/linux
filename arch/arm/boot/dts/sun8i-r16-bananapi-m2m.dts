@@ -44,6 +44,7 @@
 #include "sun8i-a33.dtsi"
 
 #include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/pwm/pwm.h>
 
 / {
 	model = "BananaPi M2M";
@@ -108,7 +109,6 @@
 		regulator-name = "panel";
 		regulator-min-microvolt = <3300000>;
 		regulator-max-microvolt = <3300000>;
-		gpio = <&pio 1 7 GPIO_ACTIVE_HIGH; /* PB07 */
 		enable-active-high;
 	};
 };

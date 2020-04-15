@@ -24,7 +24,7 @@
 struct jd9365 {
 	struct drm_panel	panel;
 	struct mipi_dsi_device	*dsi;
-	struct backlight_device	*backlight
+	struct backlight_device	*backlight;
 	struct regulator	*power;
 	struct gpio_desc	*reset;
 };
