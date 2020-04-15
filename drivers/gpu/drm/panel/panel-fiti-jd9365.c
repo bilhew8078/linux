@@ -24,7 +24,7 @@
 struct jd9365 {
 	struct drm_panel	panel;
 	struct mipi_dsi_device	*dsi;
-
+	struct backlight_device	*backlight
 	struct regulator	*power;
 	struct gpio_desc	*reset;
 };
@@ -338,10 +338,10 @@ static int jd9365_prepare(struct drm_panel *panel)
 	int ret;
 	printk(KERN_NOTICE "JD9365 Module Prepare started\n");
 	/* Power the panel */
-/*	ret = regulator_enable(ctx->power);
+	ret = regulator_enable(ctx->power);
 	if (ret)
 		return ret;
-*/
+
 	msleep(5);
 
 	/* And reset it */
@@ -397,7 +397,7 @@ static int jd9365_enable(struct drm_panel *panel)
 	msleep(120);
 
 	mipi_dsi_dcs_set_display_on(ctx->dsi);
-	//backlight_enable(ctx->backlight);
+	backlight_enable(ctx->backlight);
 
 	return 0;
 }
@@ -406,7 +406,7 @@ static int jd9365_disable(struct drm_panel *panel)
 {
 	struct jd9365 *ctx = panel_to_jd9365(panel);
 
-	//backlight_disable(ctx->backlight);
+	backlight_disable(ctx->backlight);
 	return mipi_dsi_dcs_set_display_off(ctx->dsi);
 }
 
@@ -415,7 +415,7 @@ static int jd9365_unprepare(struct drm_panel *panel)
 	struct jd9365 *ctx = panel_to_jd9365(panel);
 
 	mipi_dsi_dcs_enter_sleep_mode(ctx->dsi);
-	//regulator_disable(ctx->power);
+	regulator_disable(ctx->power);
 	gpiod_set_value(ctx->reset, 1);
 
 	return 0;
