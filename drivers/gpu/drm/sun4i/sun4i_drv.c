@@ -95,6 +95,7 @@ static int sun4i_drv_bind(struct device *dev)
 
 	/* drm_vblank_init calls kcalloc, which can fail */
 	ret = drm_vblank_init(drm, drm->mode_config.num_crtc);
+	printk("BILL: Sun4i_drv.c - drm_vblank_init() = %d\n", ret);
 	if (ret)
 		goto cleanup_mode_config;
 
@@ -102,7 +103,7 @@ static int sun4i_drv_bind(struct device *dev)
 
 	/* Remove early framebuffers (ie. simplefb) */
 	drm_fb_helper_remove_conflicting_framebuffers(NULL, "sun4i-drm-fb", false);
-
+	printk("BILL: Sun4i_drv.c - just removed fb - about to init fb\n");
 	sun4i_framebuffer_init(drm);
 
 	/* Enable connectors polling */

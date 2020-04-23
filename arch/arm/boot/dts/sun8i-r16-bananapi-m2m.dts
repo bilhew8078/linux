@@ -195,8 +195,8 @@
 
 &reg_aldo1 {
 	regulator-always-on;
-	regulator-min-microvolt = <3000000>;
-	regulator-max-microvolt = <3000000>;
+	regulator-min-microvolt = <3300000>;
+	regulator-max-microvolt = <3300000>;
 	regulator-name = "vcc-io";
 };
 
@@ -215,6 +215,7 @@
 };
 
 &reg_dc1sw {
+	regulator-always-on;
 	regulator-name = "vcc-lcd";
 };
 

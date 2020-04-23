@@ -766,10 +766,11 @@ static void sun6i_dsi_encoder_enable(struct drm_encoder *encoder)
 	if (!IS_ERR(dsi->panel))
 		drm_panel_enable(dsi->panel);
 
+	printk(KERN_NOTICE "SUN6I_MIPI_DSI - about to start HSC\n");
 	sun6i_dsi_start(dsi, DSI_START_HSC);
 
 	udelay(1000);
-
+	printk(KERN_NOTICE "SUN6I_MIPI_DSI - about to start HSD\n");
 	sun6i_dsi_start(dsi, DSI_START_HSD);
 }
 

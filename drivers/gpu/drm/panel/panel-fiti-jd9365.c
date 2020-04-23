@@ -10,6 +10,7 @@
 #include <linux/errno.h>
 #include <linux/fb.h>
 #include <linux/kernel.h>
+#include <linux/gfp.h>
 #include <linux/module.h>
 
 #include <linux/gpio/consumer.h>
@@ -21,7 +22,42 @@
 
 #include <video/mipi_display.h>
 
-struct jd9365 {
+#define PIXEL_CLOCK		67300	//pixel clock in kHz
+
+#define H_RESOLUTION	800
+#define WIDTH_MM		94
+#define H_SYNC_ACTIVE	20
+#define H_BACKPORCH		40
+#define H_FRONTPORCH	40
+/*
+#define H_RESOLUTION	1280
+#define WIDTH_MM		151
+#define H_SYNC_ACTIVE	9
+#define H_BACKPORCH		6
+#define H_FRONTPORCH	16 */
+
+#define H_START			H_RESOLUTION + H_FRONTPORCH
+#define H_END			H_START + H_SYNC_ACTIVE
+#define H_TOTAL			H_END + H_BACKPORCH
+
+#define V_RESOLUTION	1280
+#define HEIGHT_MM		151
+#define V_SYNC_ACTIVE	9
+#define V_BACKPORCH		6
+#define V_FRONTPORCH	16
+/*
+#define V_RESOLUTION	800
+#define HEIGHT_MM		94
+#define V_SYNC_ACTIVE	20
+#define V_BACKPORCH		40
+#define V_FRONTPORCH	40 */
+
+#define V_START			V_RESOLUTION + V_FRONTPORCH
+#define V_END			V_START + V_SYNC_ACTIVE
+#define V_TOTAL			V_END + V_BACKPORCH
+
+
+struct mylcdpanel {
 	struct drm_panel	panel;
 	struct mipi_dsi_device	*dsi;
 	struct backlight_device	*backlight;
@@ -68,16 +104,16 @@ struct jd9365_instr {
 // ****** THE VALUES BELOW WERE SUPPLIED BY E-TOUCH
 
 static const struct jd9365_instr jd9365_init[] = {
-JD9365_SWITCH_PAGE_INSTR(0),
+JD9365_COMMAND_INSTR(0xE0,0x00),
 //password
 JD9365_COMMAND_INSTR(0xE1,0x93),
 JD9365_COMMAND_INSTR(0xE2,0x65),
 JD9365_COMMAND_INSTR(0xE3,0xF8),
 //sequence control
 JD9365_COMMAND_INSTR(0x80,0x03), //0x01 MIPI 2 LANE  03 4 lane
-JD9365_SWITCH_PAGE_INSTR(4),
+JD9365_COMMAND_INSTR(0xE0,0x04),
 JD9365_COMMAND_INSTR(0x2D,0x03),
-JD9365_SWITCH_PAGE_INSTR(1),
+JD9365_COMMAND_INSTR(0xE0,0x01),
 JD9365_COMMAND_INSTR(0x00,0x00),
 JD9365_COMMAND_INSTR(0x01,0x8E),
 JD9365_COMMAND_INSTR(0x03,0x00),
@@ -151,7 +187,7 @@ JD9365_COMMAND_INSTR(0x7F,0x24),
 JD9365_COMMAND_INSTR(0x80,0x19),
 JD9365_COMMAND_INSTR(0x81,0x0A),
 JD9365_COMMAND_INSTR(0x82,0x00),
-JD9365_SWITCH_PAGE_INSTR(2),
+JD9365_COMMAND_INSTR(0xE0,0x02),
 JD9365_COMMAND_INSTR(0x00,0x0E),
 JD9365_COMMAND_INSTR(0x01,0x06),
 JD9365_COMMAND_INSTR(0x02,0x0C),
@@ -279,21 +315,21 @@ JD9365_COMMAND_INSTR(0x7B,0x00),
 JD9365_COMMAND_INSTR(0x7C,0x00),
 JD9365_COMMAND_INSTR(0x7D,0x03),
 JD9365_COMMAND_INSTR(0x7E,0x7B),
-JD9365_SWITCH_PAGE_INSTR(4),
+JD9365_COMMAND_INSTR(0xE0,0x04),
 JD9365_COMMAND_INSTR(0x09,0x10),
 JD9365_COMMAND_INSTR(0x0E,0x38),
 JD9365_COMMAND_INSTR(0x2B,0x2B),
 JD9365_COMMAND_INSTR(0x2D,0x03),
 JD9365_COMMAND_INSTR(0x2E,0x44),
-JD9365_SWITCH_PAGE_INSTR(0),
+JD9365_COMMAND_INSTR(0xE0,0x00),
 JD9365_COMMAND_INSTR(0xE6,0x02),
 JD9365_COMMAND_INSTR(0xE7,0x06),
 JD9365_COMMAND_INSTR(0x11,0x00),
 };
 
-static inline struct jd9365 *panel_to_jd9365(struct drm_panel *panel)
+static inline struct mylcdpanel *panel_to_jd9365(struct drm_panel *panel)
 {
-	return container_of(panel, struct jd9365, panel);
+	return container_of(panel, struct mylcdpanel, panel);
 }
 
 /*
@@ -307,7 +343,7 @@ static inline struct jd9365 *panel_to_jd9365(struct drm_panel *panel)
  * So before any attempt at sending a command or data, we have to be
  * sure if we're in the right page or not.
  */
-static int jd9365_switch_page(struct jd9365 *ctx, u8 page)
+static int jd9365_switch_page(struct mylcdpanel *ctx, u8 page)
 {
 	u8 buf[4] = { 0xff, 0x98, 0x81, page };
 	int ret;
@@ -319,7 +355,7 @@ static int jd9365_switch_page(struct jd9365 *ctx, u8 page)
 	return 0;
 }
 
-static int jd9365_send_cmd_data(struct jd9365 *ctx, u8 cmd, u8 data)
+static int jd9365_send_cmd_data(struct mylcdpanel *ctx, u8 cmd, u8 data)
 {
 	u8 buf[2] = { cmd, data };
 	int ret;
@@ -333,10 +369,10 @@ static int jd9365_send_cmd_data(struct jd9365 *ctx, u8 cmd, u8 data)
 
 static int jd9365_prepare(struct drm_panel *panel)
 {
-	struct jd9365 *ctx = panel_to_jd9365(panel);
+	struct mylcdpanel *ctx = panel_to_jd9365(panel);
 	unsigned int i;
 	int ret;
-	printk(KERN_NOTICE "JD9365 Module Prepare started\n");
+	printk(KERN_NOTICE "JD9365 Module jd9365_prepare started\n");
 	/* Power the panel */
 	ret = regulator_enable(ctx->power);
 	if (ret)
@@ -347,13 +383,13 @@ static int jd9365_prepare(struct drm_panel *panel)
 	/* And reset it */
 	gpiod_set_value(ctx->reset, 0);
 	msleep(5);
-
+	printk(KERN_NOTICE "JD9365 Module jd9365_prepare setting reset low\n");
 	gpiod_set_value(ctx->reset, 1);
 	msleep(10);
-
+	printk(KERN_NOTICE "JD9365 Module jd9365_prepare setting reset high\n");
 	gpiod_set_value(ctx->reset, 0);
 	msleep(120);
-
+	printk(KERN_NOTICE "JD9365 Module jd9365_prepare starting to send data\n");
 	for (i = 0; i < ARRAY_SIZE(jd9365_init); i++) {
 		const struct jd9365_instr *instr = &jd9365_init[i];
 
@@ -366,6 +402,7 @@ static int jd9365_prepare(struct drm_panel *panel)
 		if (ret)
 			return ret;
 	}
+	printk(KERN_NOTICE "JD9365 Module jd9365_prepare bulk data sent\n");
 	msleep(120);
 	ret =jd9365_send_cmd_data(ctx, 0x29, 0x00);
 	if (ret)
@@ -374,37 +411,34 @@ static int jd9365_prepare(struct drm_panel *panel)
 	ret =jd9365_send_cmd_data(ctx, 0x35, 0x00);
 	if (ret)
 		return ret;
+	printk(KERN_NOTICE "JD9365 Module jd9365_prepare final commands sent\n");
 
-	ret = jd9365_switch_page(ctx, 0);
-	if (ret)
-		return ret;
-
-	ret = mipi_dsi_dcs_set_tear_on(ctx->dsi, MIPI_DSI_DCS_TEAR_MODE_VBLANK);
-	if (ret)
-		return ret;
+	//ret = mipi_dsi_dcs_set_tear_on(ctx->dsi, MIPI_DSI_DCS_TEAR_MODE_VBLANK);
+	//if (ret)
+	//	return ret;
 
 	ret = mipi_dsi_dcs_exit_sleep_mode(ctx->dsi);
 	if (ret)
 		return ret;
-
+	printk(KERN_NOTICE "JD9365 Module jd9365_prepare good exit\n");
 	return 0;
 }
 
 static int jd9365_enable(struct drm_panel *panel)
 {
-	struct jd9365 *ctx = panel_to_jd9365(panel);
-
+	struct mylcdpanel *ctx = panel_to_jd9365(panel);
+	printk(KERN_NOTICE "JD9365 Module jd9365_enable started\n");
 	msleep(120);
 
 	mipi_dsi_dcs_set_display_on(ctx->dsi);
 	backlight_enable(ctx->backlight);
-
+	printk(KERN_NOTICE "JD9365 Module jd9365_enable exiting\n");
 	return 0;
 }
 
 static int jd9365_disable(struct drm_panel *panel)
 {
-	struct jd9365 *ctx = panel_to_jd9365(panel);
+	struct mylcdpanel *ctx = panel_to_jd9365(panel);
 
 	backlight_disable(ctx->backlight);
 	return mipi_dsi_dcs_set_display_off(ctx->dsi);
@@ -412,7 +446,7 @@ static int jd9365_disable(struct drm_panel *panel)
 
 static int jd9365_unprepare(struct drm_panel *panel)
 {
-	struct jd9365 *ctx = panel_to_jd9365(panel);
+	struct mylcdpanel *ctx = panel_to_jd9365(panel);
 
 	mipi_dsi_dcs_enter_sleep_mode(ctx->dsi);
 	regulator_disable(ctx->power);
@@ -421,44 +455,43 @@ static int jd9365_unprepare(struct drm_panel *panel)
 	return 0;
 }
 
-static const struct drm_display_mode bananapi_default_mode = {
-	.clock		= 67330,
-	.vrefresh	= 60,
-
-	.hdisplay	= 800,
-	.hsync_start	= 800 + 10,
-	.hsync_end	= 800 + 10 + 20,
-	.htotal		= 800 + 10 + 20 + 30,
-
-	.vdisplay	= 1280,
-	.vsync_start	= 1280 + 10,
-	.vsync_end	= 1280 + 10 + 10,
-	.vtotal		= 1280 + 10 + 10 + 20,
+static const struct drm_display_mode etouch_default_mode = {
+	.clock			= PIXEL_CLOCK,
+	.vrefresh		= 60,
+	.hdisplay		= H_RESOLUTION,
+	.hsync_start	= H_START,
+	.hsync_end		= H_END,
+	.htotal			= H_TOTAL,
+	.vdisplay		= V_RESOLUTION,
+	.vsync_start	= V_START,
+	.vsync_end		= V_END,
+	.vtotal			= V_TOTAL,
+	.width_mm		= WIDTH_MM,
+	.height_mm		= HEIGHT_MM,
+	.type			= DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED
 };
+
 
 static int jd9365_get_modes(struct drm_panel *panel)
 {
 	struct drm_connector *connector = panel->connector;
-	struct jd9365 *ctx = panel_to_jd9365(panel);
+	struct mylcdpanel *ctx = panel_to_jd9365(panel);
 	struct drm_display_mode *mode;
-
-	mode = drm_mode_duplicate(panel->drm, &bananapi_default_mode);
+	printk(KERN_NOTICE "JD9365 Module get_modes start\n");
+	mode = drm_mode_duplicate(panel->drm, &etouch_default_mode);
 	if (!mode) {
 		dev_err(&ctx->dsi->dev, "failed to add mode %ux%ux@%u\n",
-			bananapi_default_mode.hdisplay,
-			bananapi_default_mode.vdisplay,
-			bananapi_default_mode.vrefresh);
+			etouch_default_mode.hdisplay,
+			etouch_default_mode.vdisplay,
+			etouch_default_mode.vrefresh);
 		return -ENOMEM;
 	}
-
 	drm_mode_set_name(mode);
-
-	mode->type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED;
 	drm_mode_probed_add(connector, mode);
-
-	panel->connector->display_info.width_mm = 94;
-	panel->connector->display_info.height_mm = 151;
-
+	printk("JD9365 " DRM_MODE_FMT "\n", DRM_MODE_ARG(mode));
+	panel->connector->display_info.width_mm = WIDTH_MM;
+	panel->connector->display_info.height_mm = HEIGHT_MM;
+	printk(KERN_NOTICE "JD9365 Module get_modes exiting\n");
 	return 1;
 }
 
@@ -473,9 +506,9 @@ static const struct drm_panel_funcs jd9365_funcs = {
 static int jd9365_dsi_probe(struct mipi_dsi_device *dsi)
 {
 	struct device_node *np;
-	struct jd9365 *ctx;
+	struct mylcdpanel *ctx;
 	int ret;
-
+	printk(KERN_NOTICE "JD9365 Module Probe started\n");
 	ctx = devm_kzalloc(&dsi->dev, sizeof(*ctx), GFP_KERNEL);
 	if (!ctx)
 		return -ENOMEM;
@@ -498,20 +531,29 @@ static int jd9365_dsi_probe(struct mipi_dsi_device *dsi)
 		return PTR_ERR(ctx->reset);
 	}
 
+	np = of_parse_phandle(dsi->dev.of_node, "backlight", 0);
+	if (np) {
+		ctx->backlight = of_find_backlight_by_node(np);
+		of_node_put(np);
+
+		if (!ctx->backlight)
+			return -EPROBE_DEFER;
+	}
+
 	ret = drm_panel_add(&ctx->panel);
 	if (ret < 0)
 		return ret;
 
-	dsi->mode_flags = MIPI_DSI_MODE_VIDEO_SYNC_PULSE;
+	dsi->mode_flags = (MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_BURST) ;
 	dsi->format = MIPI_DSI_FMT_RGB888;
 	dsi->lanes = 4;
-
+	printk(KERN_NOTICE "JD9365 Module Probe just before mipi_dsi_attach call\n");
 	return mipi_dsi_attach(dsi);
 }
 
 static int jd9365_dsi_remove(struct mipi_dsi_device *dsi)
 {
-	struct jd9365 *ctx = mipi_dsi_get_drvdata(dsi);
+	struct mylcdpanel *ctx = mipi_dsi_get_drvdata(dsi);
 
 	mipi_dsi_detach(dsi);
 	drm_panel_remove(&ctx->panel);
