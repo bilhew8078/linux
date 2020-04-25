@@ -199,7 +199,7 @@ void sun4i_tcon_set_status(struct sun4i_tcon *tcon,
 void sun4i_tcon_enable_vblank(struct sun4i_tcon *tcon, bool enable)
 {
 	u32 mask, val = 0;
-
+	printk(KERN_NOTICE "BILL: sun4i_tcon: inside tcon_enable_vblank\n");
 	DRM_DEBUG_DRIVER("%sabling VBLANK interrupt\n", enable ? "En" : "Dis");
 
 	mask = SUN4I_TCON_GINT0_VBLANK_ENABLE(0) |
@@ -269,11 +269,12 @@ static void sun4i_tcon0_mode_set_common(struct sun4i_tcon *tcon,
 {
 	/* Configure the dot clock */
 	clk_set_rate(tcon->dclk, mode->crtc_clock * 1000);
-
+	printk(KERN_NOTICE "BILL: tcon0_mode_set_common: crtc_clock=%d\n", mode->crtc_clock);
 	/* Set the resolution */
 	regmap_write(tcon->regs, SUN4I_TCON0_BASIC0_REG,
 		     SUN4I_TCON0_BASIC0_X(mode->crtc_hdisplay) |
 		     SUN4I_TCON0_BASIC0_Y(mode->crtc_vdisplay));
+	printk(KERN_NOTICE "BILL: tcon0_mode_set_common: crtc_hdisplay=%d  crtc_vdisplay=%d\n", mode->crtc_hdisplay, mode->crtc_vdisplay);
 }
 
 static void sun4i_tcon0_mode_set_dithering(struct sun4i_tcon *tcon,

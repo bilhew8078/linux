@@ -1146,7 +1146,7 @@ static int sun6i_dsi_probe(struct platform_device *pdev)
 		dev_err(dev, "Couldn't register our component\n");
 		goto err_remove_dsi_host;
 	}
-
+	printk(KERN_NOTICE "BILL: sun6i_mipi_dsi - COMPONENT REGISTERED\n");
 	return 0;
 
 err_remove_dsi_host:

@@ -22,7 +22,9 @@
 
 #include <video/mipi_display.h>
 
-#define PIXEL_CLOCK		67300	//pixel clock in kHz
+#define DSIMODEFLAGS	(MIPI_DSI_MODE_VIDEO_AUTO_VERT | MIPI_DSI_MODE_VIDEO_BURST)
+
+#define PIXEL_CLOCK		81000	//pixel clock in kHz
 
 #define H_RESOLUTION	800
 #define WIDTH_MM		94
@@ -378,18 +380,19 @@ static int jd9365_prepare(struct drm_panel *panel)
 	if (ret)
 		return ret;
 
-	msleep(5);
+	msleep(25);
 
 	/* And reset it */
 	gpiod_set_value(ctx->reset, 0);
 	msleep(5);
 	printk(KERN_NOTICE "JD9365 Module jd9365_prepare setting reset low\n");
 	gpiod_set_value(ctx->reset, 1);
-	msleep(10);
+	msleep(15);
 	printk(KERN_NOTICE "JD9365 Module jd9365_prepare setting reset high\n");
 	gpiod_set_value(ctx->reset, 0);
-	msleep(120);
+	msleep(150);
 	printk(KERN_NOTICE "JD9365 Module jd9365_prepare starting to send data\n");
+	printk(KERN_NOTICE "JD9365 - Array size = %d\n", ARRAY_SIZE(jd9365_init));
 	for (i = 0; i < ARRAY_SIZE(jd9365_init); i++) {
 		const struct jd9365_instr *instr = &jd9365_init[i];
 
@@ -400,7 +403,11 @@ static int jd9365_prepare(struct drm_panel *panel)
 						      instr->arg.cmd.data);
 
 		if (ret)
+		{
+			printk(KERN_NOTICE "JD9365: error writing commands to panel\n");
 			return ret;
+		}
+
 	}
 	printk(KERN_NOTICE "JD9365 Module jd9365_prepare bulk data sent\n");
 	msleep(120);
@@ -413,9 +420,10 @@ static int jd9365_prepare(struct drm_panel *panel)
 		return ret;
 	printk(KERN_NOTICE "JD9365 Module jd9365_prepare final commands sent\n");
 
-	//ret = mipi_dsi_dcs_set_tear_on(ctx->dsi, MIPI_DSI_DCS_TEAR_MODE_VBLANK);
-	//if (ret)
-	//	return ret;
+	ret = mipi_dsi_dcs_set_tear_on(ctx->dsi, MIPI_DSI_DCS_TEAR_MODE_VHBLANK);
+	printk(KERN_NOTICE "JD9365 Module set_tear_on VHBLANK ret = %d\n", ret);
+	if (ret)
+		return ret;
 
 	ret = mipi_dsi_dcs_exit_sleep_mode(ctx->dsi);
 	if (ret)
@@ -468,6 +476,7 @@ static const struct drm_display_mode etouch_default_mode = {
 	.vtotal			= V_TOTAL,
 	.width_mm		= WIDTH_MM,
 	.height_mm		= HEIGHT_MM,
+	.flags			= DRM_MODE_FLAG_NVSYNC,
 	.type			= DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED
 };
 
@@ -543,10 +552,11 @@ static int jd9365_dsi_probe(struct mipi_dsi_device *dsi)
 	ret = drm_panel_add(&ctx->panel);
 	if (ret < 0)
 		return ret;
-
-	dsi->mode_flags = (MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_BURST) ;
+	printk(KERN_NOTICE "JD9365 Module Probe - setting mode = %#x\n", DSIMODEFLAGS);
+	dsi->mode_flags =  DSIMODEFLAGS;
 	dsi->format = MIPI_DSI_FMT_RGB888;
 	dsi->lanes = 4;
+	//dsi->hs_rate =
 	printk(KERN_NOTICE "JD9365 Module Probe just before mipi_dsi_attach call\n");
 	return mipi_dsi_attach(dsi);
 }
