@@ -359,6 +359,22 @@
 			remote-endpoint = <&dsi_out_panel>;
 			};
 		};
+		display-timings {
+		native-mode = <&timing0>;
+		timing0: 800x1280 {
+			/* 800x1280p60 */
+			clock-frequency = <81000000>;
+			hactive = <800>;
+			vactive = <1280>;
+			hfront-porch = <40>;
+			hback-porch = <40>;
+			hsync-len = <20>;
+			vback-porch = <6>;
+			vfront-porch = <16>;
+			vsync-len = <9>;
+			hsync-active = <0>;
+		};
+	};
 	};
 };
 
