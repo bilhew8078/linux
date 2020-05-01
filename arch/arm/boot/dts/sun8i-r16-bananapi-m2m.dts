@@ -349,32 +349,19 @@
 			};
 		};
 	};
-	panel@0 {
-		compatible = "fiti,jd9365";
+		panel@0 {
+		compatible = "etouch,jd9365";
 		reg = <0>;
 		reset-gpios = <&r_pio 0 5 GPIO_ACTIVE_LOW>; /* PL05 */
-		power-supply = <&reg_panel>;
+		dsi-lanes = <4>;
+		width-mm = <94>;
+		height-mm = <151>;
+		video-mode = <0>;
+
 		port {
 			panel_out_dsi: endpoint {
 			remote-endpoint = <&dsi_out_panel>;
 			};
-		};
-		display-timings {
-		native-mode = <&timing0>;
-		timing0: 800x1280 {
-			/* 800x1280p60 */
-			clock-frequency = <81000000>;
-			hactive = <800>;
-			vactive = <1280>;
-			hfront-porch = <40>;
-			hback-porch = <40>;
-			hsync-len = <20>;
-			vback-porch = <6>;
-			vfront-porch = <16>;
-			vsync-len = <9>;
-			hsync-active = <0>;
-		};
-	};
 	};
 };
 

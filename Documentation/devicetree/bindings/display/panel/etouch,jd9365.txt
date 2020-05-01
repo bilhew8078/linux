@@ -1,0 +1,37 @@
+E-Touch JD9365 LCD panel with MIPI-DSI protocol
+
+Required properties:
+- compatible: 		"etouch,jd9365"
+- reg:			virtual channel for MIPI-DSI protocol
+			must be <0>
+- dsi-lanes:		number of DSI lanes to be used
+			must be <4>
+- port: 		input port node with endpoint definition as
+			defined in Documentation/devicetree/bindings/graph.txt;
+			the input port should be connected to a MIPI-DSI device
+			driver
+
+Optional properties:
+- reset-gpios:		a GPIO spec for the RST_B GPIO pin
+- width-mm:		see panel-common.txt
+- height-mm:		see panel-common.txt
+- video-mode:		0 - burst-mode
+			1 - non-burst with sync event
+			2 - non-burst with sync pulse
+
+Example:
+
+	panel@0 {
+		compatible = "etouch,jd9365";
+		reg = <0>;
+		reset-gpios = <&r_pio 0 5 GPIO_ACTIVE_LOW>; /* PL05 */
+		dsi-lanes = <4>;
+		width-mm = <94>;
+		height-mm = <151>;
+		video-mode = <0>;
+
+		port {
+			panel_out_dsi: endpoint {
+			remote-endpoint = <&dsi_out_panel>;
+			};
+	};
