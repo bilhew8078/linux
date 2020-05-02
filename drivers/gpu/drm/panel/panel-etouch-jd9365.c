@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * E-Touch JD9365 MIPI-DSI panel driver
- *
+ * I JUST FUCKED WITH THIS FILE @ 8:45am
  * Copyright 2020 ImageCue LLC
  */
 
