@@ -1,25 +1,24 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * E-Touch JD9365 MIPI-DSI panel driver
- * I JUST FUCKED WITH THIS FILE @ 8:45am
- * Copyright 2020 ImageCue LLC
+ * Copyright (C) 2020, ImageCue
  */
 
-#include <linux/backlight.h>
 #include <linux/delay.h>
-#include <linux/gpio/consumer.h>
+#include <linux/device.h>
+#include <linux/err.h>
+#include <linux/errno.h>
+#include <linux/fb.h>
+#include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/of.h>
+
+#include <linux/gpio/consumer.h>
 #include <linux/regulator/consumer.h>
 
-#include <video/mipi_display.h>
-#include <video/of_videomode.h>
-#include <video/videomode.h>
-
-#include <drm/drm_crtc.h>
 #include <drm/drm_mipi_dsi.h>
+#include <drm/drm_modes.h>
 #include <drm/drm_panel.h>
-#include <drm/drm_print.h>
+
+#include <video/mipi_display.h>
 
 // These values are based upon data received from E-Touch
 // They do not match the median values suggested for the chip
@@ -36,15 +35,13 @@
 #define HEIGHTMM	151
 #define PIX_CLOCK	70794	//(H_TOTAL*V_TOTAL*V_REFRESH)/1000
 
-#define TEAR_SCANLINE 1280 // I have no idea what value should be...
+struct jd9365 {
+	struct drm_panel	panel;
+	struct mipi_dsi_device	*dsi;
 
-/* Panel specific color-format bits - possibly not used*/
-#define COL_FMT_16BPP 0x55
-#define COL_FMT_18BPP 0x66
-#define COL_FMT_24BPP 0x77
-
-/* Write Manufacture Command Set Control */
-#define WRMAUCCTR 0xFE
+	struct regulator	*power;
+	struct gpio_desc	*reset;
+};
 
 /* Manufacturer Command Set pages (CMD2) */
 struct cmd_set_entry {
@@ -280,442 +277,227 @@ static const struct cmd_set_entry manufacturer_cmd_set[] = {
 		{0x11,0x00},
 };
 
-
-static const u32 jd_bus_formats[] = {
-	MEDIA_BUS_FMT_RGB888_1X24,
-	MEDIA_BUS_FMT_RGB666_1X18,
-	MEDIA_BUS_FMT_RGB565_1X16,
-};
-
-static const u32 jd_bus_flags = DRM_BUS_FLAG_DE_LOW |
-				 DRM_BUS_FLAG_PIXDATA_NEGEDGE;
-
-struct jd_panel {
-	struct drm_panel panel;
-	struct mipi_dsi_device *dsi;
-
-	struct gpio_desc *reset;
-	struct backlight_device *backlight;
-
-	bool prepared;
-	bool enabled;
-};
-
-static const struct drm_display_mode default_mode = {
-	.clock = PIX_CLOCK,
-	.hdisplay = H_DISPLAY,
-	.hsync_start = HS_START,
-	.hsync_end = HS_END,
-	.htotal = H_TOTAL,
-	.vdisplay = V_DISPLAY,
-	.vsync_start = VS_START,
-	.vsync_end = VS_END,
-	.vtotal = V_TOTAL,
-	.vrefresh = V_REFRESH,
-	.width_mm = WIDTHMM,
-	.height_mm = HEIGHTMM,
-	.flags = DRM_MODE_FLAG_NHSYNC |
-		 DRM_MODE_FLAG_NVSYNC,
-};
-
-static inline struct jd_panel *to_jd_panel(struct drm_panel *panel)
+static inline struct jd9365 *panel_to_jd9365(struct drm_panel *panel)
 {
-	return container_of(panel, struct jd_panel, panel);
+	return container_of(panel, struct jd9365, panel);
 }
 
-static int jd_panel_push_cmd_list(struct mipi_dsi_device *dsi)
+static int jd9365_panel_send_cmd_list(struct mipi_dsi_device *dsi)
 {
 	size_t i;
 	size_t count = ARRAY_SIZE(manufacturer_cmd_set);
-	printk(KERN_NOTICE "BILL: sending init commands: count=%d\n", count);
 	int ret = 0;
 
+	printk(KERN_NOTICE "BILL: DRIVER: sending init commands: count=%d\n", count);
 	for (i = 0; i < count; i++) {
 		const struct cmd_set_entry *entry = &manufacturer_cmd_set[i];
 		u8 buffer[2] = { entry->cmd, entry->param };
 
-		ret = mipi_dsi_generic_write(dsi, &buffer, sizeof(buffer));
+		ret = mipi_dsi_dcs_write_buffer(dsi, buffer, sizeof(buffer));
 		if (ret < 0)
+		{
+			printk(KERN_NOTICE "BILL: DRIVER: error sending init commands: i=%d error=%d\n", i, ret);
 			return ret;
+		}
 	}
-	printk(KERN_NOTICE "BILL: init commands sent.\n");
+	printk(KERN_NOTICE "BILL: DRIVER: %d init commands sent.\n", i);
 	return ret;
 };
 
-/*
-static int color_format_from_dsi_format(enum mipi_dsi_pixel_format format)
+static int jd9365_prepare(struct drm_panel *panel)
 {
-	switch (format) {
-	case MIPI_DSI_FMT_RGB565:
-		return COL_FMT_16BPP;
-	case MIPI_DSI_FMT_RGB666:
-	case MIPI_DSI_FMT_RGB666_PACKED:
-		return COL_FMT_18BPP;
-	case MIPI_DSI_FMT_RGB888:
-		return COL_FMT_24BPP;
-	default:
-		return COL_FMT_24BPP; // for backward compatibility
-	}
-}; */
-
-static int jd_panel_prepare(struct drm_panel *panel)
-{
-	struct jd_panel *jd = to_jd_panel(panel);
+	struct jd9365 *ctx = panel_to_jd9365(panel);
+	unsigned int i;
 	int ret;
 
-	if (jd->prepared)
-		return 0;
+	/* Power the panel */
+	ret = regulator_enable(ctx->power);
+	if (ret)
+		return ret;
+	msleep(250);
 
-	if (jd->reset) {
-		gpiod_set_value_cansleep(jd->reset, 0); //make sure the line is HIGH
-		usleep_range(10000, 15000);
-		gpiod_set_value_cansleep(jd->reset, 1);  //take line LOW to reset
-		usleep_range(10000, 15000);
-		gpiod_set_value_cansleep(jd->reset, 0); //return the line HIGH
-		usleep_range(120000, 150000);
-	}
+	gpiod_set_value(ctx->reset, 0); //ensure line is high
+	msleep(250); //delay for a while
 
-	jd->prepared = true;
-
+	printk(KERN_NOTICE "BILL: DRIVER: Successful exit from prepare\n");
 	return 0;
 }
 
-static int jd_panel_unprepare(struct drm_panel *panel)
+static int jd9365_enable(struct drm_panel *panel)
 {
-	struct jd_panel *jd = to_jd_panel(panel);
+	struct jd9365 *ctx = panel_to_jd9365(panel);
 	int ret;
+	/* do a reset */
+	gpiod_set_value(ctx->reset, 1);
+	msleep(20);
 
-	if (!jd->prepared)
-		return 0;
+	gpiod_set_value(ctx->reset, 0);
+	msleep(150);
+	printk(KERN_NOTICE "BILL: DRIVER: Reset pulse sent - just before command list\n");
 
-	/*
-	 * Right after asserting the reset, we need to release it, so that the
-	 * touch driver can have an active connection with the touch controller
-	 * even after the display is turned off.
-	 */
-	if (jd->reset) {
-		gpiod_set_value_cansleep(jd->reset, 1);
-		usleep_range(15000, 17000);
-		gpiod_set_value_cansleep(jd->reset, 0);
-	}
-
-	jd->prepared = false;
-
-	return 0;
-}
-
-static int jd_panel_enable(struct drm_panel *panel)
-{
-	struct jd_panel *jd = to_jd_panel(panel);
-	struct mipi_dsi_device *dsi = jd->dsi;
-	struct device *dev = &dsi->dev;
-	//int color_format = color_format_from_dsi_format(dsi->format);
-	int ret;
-
-	if (jd->enabled)
-		return 0;
-
-	dsi->mode_flags |= MIPI_DSI_MODE_LPM;  //change the mode for instruction push
-
-	ret = jd_panel_push_cmd_list(dsi);
-	if (ret < 0) {
-		DRM_DEV_ERROR(dev, "Failed to send MCS (%d)\n", ret);
-		goto fail;
-	}
-	// last command sent took display out of sleep mode - now delay
-	usleep_range(120000, 150000); //per the E-Touch init instructions
-
-	/* Turn on display with command */
-	ret = mipi_dsi_generic_write(dsi, (u8[]) {0x29, 0x00}, 2);
-	if (ret < 0) {
-		DRM_DEV_ERROR(dev, "Failed to turn on display (%d)\n", ret);
-		goto fail;
-	}
-	usleep_range(5000,7500); //per the E-Touch init instructions
-
-	/* Set tear ON */
-	ret = mipi_dsi_dcs_set_tear_on(dsi, MIPI_DSI_DCS_TEAR_MODE_VBLANK);
-	if (ret < 0) {
-		DRM_DEV_ERROR(dev, "Failed to set tear ON (%d)\n", ret);
-		goto fail;
-	}
-	// Set tear scanline  THIS MIGHT NOT BE NEEDED (setup in early commands?)
-	ret = mipi_dsi_dcs_set_tear_scanline(dsi, TEAR_SCANLINE);
-	if (ret < 0) {
-		DRM_DEV_ERROR(dev, "Failed to set tear scanline (%d)\n", ret);
-		goto fail;
-	}
-/*	THIS CODE IS LEFT OVER FROM RAYDIUM PANEL DRIVER
-	// Set pixel format
-	ret = mipi_dsi_dcs_set_pixel_format(dsi, color_format);
-	DRM_DEV_DEBUG_DRIVER(dev, "Interface color format set to 0x%x\n",
-			     color_format);
-	if (ret < 0) {
-		DRM_DEV_ERROR(dev, "Failed to set pixel format (%d)\n", ret);
-		goto fail;
-	}
-	// Exit sleep mode
-	ret = mipi_dsi_dcs_exit_sleep_mode(dsi);
-	if (ret < 0) {
-		DRM_DEV_ERROR(dev, "Failed to exit sleep mode (%d)\n", ret);
-		goto fail;
-	}
-
-	usleep_range(5000, 7000);
-
-	ret = mipi_dsi_dcs_set_display_on(dsi);
-	if (ret < 0) {
-		DRM_DEV_ERROR(dev, "Failed to set display ON (%d)\n", ret);
-		goto fail;
-	}
-*/
-	backlight_enable(jd->backlight);
-
-	jd->enabled = true;
-
-	return 0;
-
-fail:
-	gpiod_set_value_cansleep(jd->reset, 1);
-
-	return ret;
-}
-
-static int jd_panel_disable(struct drm_panel *panel)
-{
-	struct jd_panel *jd = to_jd_panel(panel);
-	struct mipi_dsi_device *dsi = jd->dsi;
-	struct device *dev = &dsi->dev;
-	int ret;
-
-	if (!jd->enabled)
-		return 0;
-
-	dsi->mode_flags |= MIPI_DSI_MODE_LPM;
-
-	backlight_disable(jd->backlight);
-
-	usleep_range(10000, 12000);
-
-	ret = mipi_dsi_dcs_set_display_off(dsi);
-	if (ret < 0) {
-		DRM_DEV_ERROR(dev, "Failed to set display OFF (%d)\n", ret);
+	ret = jd9365_panel_send_cmd_list(ctx->dsi);
+	if (ret < 0)
+	{
+		printk(KERN_NOTICE "BILL: DRIVER: ERROR sending command list\n");
 		return ret;
 	}
 
-	usleep_range(5000, 10000);
+	msleep(130);
 
-	ret = mipi_dsi_dcs_enter_sleep_mode(dsi);
-	if (ret < 0) {
-		DRM_DEV_ERROR(dev, "Failed to enter sleep mode (%d)\n", ret);
+	ret = mipi_dsi_dcs_set_tear_on(ctx->dsi, MIPI_DSI_DCS_TEAR_MODE_VBLANK);
+	if (ret)
+	{
+		printk(KERN_NOTICE "BILL: DRIVER: ERROR turning on tear mode\n");
 		return ret;
 	}
-
-	jd->enabled = false;
-
+	msleep(10);
+	ret = mipi_dsi_dcs_exit_sleep_mode(ctx->dsi);
+	if (ret)
+		return ret;
+	msleep(10);
+	ret = mipi_dsi_dcs_set_display_on(ctx->dsi);
+	if (ret)
+	{
+		printk(KERN_NOTICE "BILL: DRIVER: ERROR turning on display\n");
+		return ret;
+	}
+	printk(KERN_NOTICE "BILL: DRIVER: Successful exit from enable\n");
 	return 0;
 }
 
-static int jd_panel_get_modes(struct drm_panel *panel,
-			       struct drm_connector *connector)
+static int jd9365_disable(struct drm_panel *panel)
 {
+	struct jd9365 *ctx = panel_to_jd9365(panel);
+
+	return mipi_dsi_dcs_set_display_off(ctx->dsi);
+}
+
+static int jd9365_unprepare(struct drm_panel *panel)
+{
+	struct jd9365 *ctx = panel_to_jd9365(panel);
+
+	mipi_dsi_dcs_enter_sleep_mode(ctx->dsi);
+	regulator_disable(ctx->power);
+	gpiod_set_value(ctx->reset, 1); //puts reset line in low state!!!
+	printk(KERN_NOTICE "BILL: DRIVER: Successful exit from unprepare - reset line low!!!\n");
+	return 0;
+}
+
+static const struct drm_display_mode bananapi_default_mode = {
+		.clock		= 62000,
+		.vrefresh	= 60,
+
+		.hdisplay	= 800,
+		.hsync_start	= 800 + 40,
+		.hsync_end	= 800 + 40 + 20,
+		.htotal		= 800 + 40 + 20 + 40,
+
+		.vdisplay	= 1280,
+		.vsync_start	= 1280 + 16,
+		.vsync_end	= 1280 + 16 + 9,
+		.vtotal		= 1280 + 16 + 9 + 6,
+};
+
+static int jd9365_get_modes(struct drm_panel *panel,struct drm_connector *connector)
+{
+	struct jd9365 *ctx = panel_to_jd9365(panel);
 	struct drm_display_mode *mode;
 
-	mode = drm_mode_duplicate(connector->dev, &default_mode);
+	mode = drm_mode_duplicate(connector->dev, &bananapi_default_mode);
 	if (!mode) {
-		DRM_DEV_ERROR(panel->dev, "failed to add mode %ux%ux@%u\n",
-			      default_mode.hdisplay, default_mode.vdisplay,
-			      default_mode.vrefresh);
+		dev_err(&ctx->dsi->dev, "failed to add mode %ux%ux@%u\n",
+			bananapi_default_mode.hdisplay,
+			bananapi_default_mode.vdisplay,
+			bananapi_default_mode.vrefresh);
 		return -ENOMEM;
 	}
 
 	drm_mode_set_name(mode);
+
 	mode->type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED;
 	drm_mode_probed_add(connector, mode);
 
-	connector->display_info.width_mm = mode->width_mm;
-	connector->display_info.height_mm = mode->height_mm;
-	connector->display_info.bus_flags = jd_bus_flags;
+	connector->display_info.width_mm = WIDTHMM;
+	connector->display_info.height_mm = HEIGHTMM;
 
-	drm_display_info_set_bus_formats(&connector->display_info,
-					 jd_bus_formats,
-					 ARRAY_SIZE(jd_bus_formats));
 	return 1;
 }
 
-static int jd_bl_get_brightness(struct backlight_device *bl)
-{
-	struct mipi_dsi_device *dsi = bl_get_data(bl);
-	struct jd_panel *jd = mipi_dsi_get_drvdata(dsi);
-	u16 brightness;
-	int ret;
-
-	if (!jd->prepared)
-		return 0;
-
-	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
-
-	ret = mipi_dsi_dcs_get_display_brightness(dsi, &brightness);
-	if (ret < 0)
-		return ret;
-
-	bl->props.brightness = brightness;
-
-	return brightness & 0xff;
-}
-
-static int jd_bl_update_status(struct backlight_device *bl)
-{
-	struct mipi_dsi_device *dsi = bl_get_data(bl);
-	struct jd_panel *jd = mipi_dsi_get_drvdata(dsi);
-	int ret = 0;
-
-	if (!jd->prepared)
-		return 0;
-
-	dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
-
-	ret = mipi_dsi_dcs_set_display_brightness(dsi, bl->props.brightness);
-	if (ret < 0)
-		return ret;
-
-	return 0;
-}
-
-static const struct backlight_ops jd_bl_ops = {
-	.update_status = jd_bl_update_status,
-	.get_brightness = jd_bl_get_brightness,
+static const struct drm_panel_funcs jd9365_funcs = {
+	.prepare	= jd9365_prepare,
+	.unprepare	= jd9365_unprepare,
+	.enable		= jd9365_enable,
+	.disable	= jd9365_disable,
+	.get_modes	= jd9365_get_modes,
 };
 
-static const struct drm_panel_funcs jd_panel_funcs = {
-	.prepare = jd_panel_prepare,
-	.unprepare = jd_panel_unprepare,
-	.enable = jd_panel_enable,
-	.disable = jd_panel_disable,
-	.get_modes = jd_panel_get_modes,
-};
-
-static int jd_panel_probe(struct mipi_dsi_device *dsi)
+static int jd9365_dsi_probe(struct mipi_dsi_device *dsi)
 {
-	struct device *dev = &dsi->dev;
-	struct device_node *np = dev->of_node;
-	struct jd_panel *panel;
-	struct backlight_properties bl_props;
+	struct jd9365 *ctx;
 	int ret;
-	u32 video_mode;
 
-	panel = devm_kzalloc(&dsi->dev, sizeof(*panel), GFP_KERNEL);
-	if (!panel)
+	ctx = devm_kzalloc(&dsi->dev, sizeof(*ctx), GFP_KERNEL);
+	if (!ctx)
 		return -ENOMEM;
+	mipi_dsi_set_drvdata(dsi, ctx);
+	ctx->dsi = dsi;
 
-	mipi_dsi_set_drvdata(dsi, panel);
+	drm_panel_init(&ctx->panel, &dsi->dev, &jd9365_funcs, DRM_MODE_CONNECTOR_DSI);
 
-	panel->dsi = dsi;
+	ctx->power = devm_regulator_get(&dsi->dev, "power");
+	printk(KERN_NOTICE "BILL: JD9365 DRIVER: just called devm_regulator_get\n");
+	if (IS_ERR(ctx->power)) {
+		dev_err(&dsi->dev, "Couldn't get our power regulator\n");
+		return PTR_ERR(ctx->power);
+	}
 
+	ctx->reset = devm_gpiod_get(&dsi->dev, "reset", GPIOD_OUT_LOW);
+	if (IS_ERR(ctx->reset)) {
+		dev_err(&dsi->dev, "Couldn't get our reset GPIO\n");
+		return PTR_ERR(ctx->reset);
+	}
+
+	ret = drm_panel_of_backlight(&ctx->panel);
+	if (ret)
+		return ret;
+
+	ret = drm_panel_add(&ctx->panel);
+	if (ret < 0)
+		return ret;
+
+	dsi->mode_flags = MIPI_DSI_MODE_VIDEO;
 	dsi->format = MIPI_DSI_FMT_RGB888;
-	dsi->mode_flags =  MIPI_DSI_MODE_VIDEO_HSE | MIPI_DSI_MODE_VIDEO |
-			   MIPI_DSI_CLOCK_NON_CONTINUOUS;
+	dsi->lanes = 4;
 
-	ret = of_property_read_u32(np, "video-mode", &video_mode);
-	if (!ret) {
-		switch (video_mode) {
-		case 0:
-			/* burst mode */
-			dsi->mode_flags |= MIPI_DSI_MODE_VIDEO_BURST;
-			break;
-		case 1:
-			/* non-burst mode with sync event */
-			break;
-		case 2:
-			/* non-burst mode with sync pulse */
-			dsi->mode_flags |= MIPI_DSI_MODE_VIDEO_SYNC_PULSE;
-			break;
-		default:
-			dev_warn(dev, "invalid video mode %d\n", video_mode);
-			break;
-		}
-	}
-
-	ret = of_property_read_u32(np, "dsi-lanes", &dsi->lanes);
-	if (ret) {
-		dev_err(dev, "Failed to get dsi-lanes property (%d)\n", ret);
-		return ret;
-	}
-
-	panel->reset = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_LOW);
-	if (IS_ERR(panel->reset))
-		return PTR_ERR(panel->reset);
-
-	memset(&bl_props, 0, sizeof(bl_props));
-	bl_props.type = BACKLIGHT_RAW;
-	bl_props.brightness = 255;
-	bl_props.max_brightness = 255;
-
-	panel->backlight = devm_backlight_device_register(dev, dev_name(dev),
-							  dev, dsi, &jd_bl_ops,
-							  &bl_props);
-	if (IS_ERR(panel->backlight)) {
-		ret = PTR_ERR(panel->backlight);
-		dev_err(dev, "Failed to register backlight (%d)\n", ret);
-		return ret;
-	}
-
-	drm_panel_init(&panel->panel, dev, &jd_panel_funcs,
-		       DRM_MODE_CONNECTOR_DSI);
-	dev_set_drvdata(dev, panel);
-
-	ret = drm_panel_add(&panel->panel);
-	if (ret)
-		return ret;
-
-	ret = mipi_dsi_attach(dsi);
-	if (ret)
-		drm_panel_remove(&panel->panel);
-
-	return ret;
+	return mipi_dsi_attach(dsi);
 }
 
-static int jd_panel_remove(struct mipi_dsi_device *dsi)
+static int jd9365_dsi_remove(struct mipi_dsi_device *dsi)
 {
-	struct jd_panel *jd = mipi_dsi_get_drvdata(dsi);
-	struct device *dev = &dsi->dev;
-	int ret;
+	struct jd9365 *ctx = mipi_dsi_get_drvdata(dsi);
 
-	ret = mipi_dsi_detach(dsi);
-	if (ret)
-		DRM_DEV_ERROR(dev, "Failed to detach from host (%d)\n",
-			      ret);
-
-	drm_panel_remove(&jd->panel);
+	mipi_dsi_detach(dsi);
+	drm_panel_remove(&ctx->panel);
 
 	return 0;
 }
 
-static void jd_panel_shutdown(struct mipi_dsi_device *dsi)
-{
-	struct jd_panel *jd = mipi_dsi_get_drvdata(dsi);
-
-	rad_panel_disable(&jd->panel);
-	rad_panel_unprepare(&jd->panel);
-}
-
-static const struct of_device_id jd_of_match[] = {
-	{ .compatible = "etouch,jd9365", },
-	{ /* sentinel */ }
+static const struct of_device_id jd9365_of_match[] = {
+	{ .compatible = "etouch,jd9365" },
+	{ }
 };
-MODULE_DEVICE_TABLE(of, jd_of_match);
+MODULE_DEVICE_TABLE(of, jd9365_of_match);
 
-static struct mipi_dsi_driver jd_panel_driver = {
+static struct mipi_dsi_driver jd9365_dsi_driver = {
+	.probe		= jd9365_dsi_probe,
+	.remove		= jd9365_dsi_remove,
 	.driver = {
-		.name = "panel-etouch-jd9365",
-		.of_match_table = jd_of_match,
+		.name		= "jd9365-dsi",
+		.of_match_table	= jd9365_of_match,
 	},
-	.probe = jd_panel_probe,
-	.remove = jd_panel_remove,
-	.shutdown = jd_panel_shutdown,
 };
-module_mipi_dsi_driver(jd_panel_driver);
+module_mipi_dsi_driver(jd9365_dsi_driver);
 
 MODULE_AUTHOR("Bill Hewlett <bill@imagecuellc.com>");
-MODULE_DESCRIPTION("DRM Driver for E-Touch JD9365 MIPI DSI panel");
+MODULE_DESCRIPTION("JD9365 Controller Driver");
 MODULE_LICENSE("GPL v2");

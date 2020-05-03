@@ -432,6 +432,7 @@ static int ili9881c_dsi_probe(struct mipi_dsi_device *dsi)
 		       DRM_MODE_CONNECTOR_DSI);
 
 	ctx->power = devm_regulator_get(&dsi->dev, "power");
+	printk(KERN_NOTICE "BILL: ILI9881 DRIVER: just called devm_regulator_get\n");
 	if (IS_ERR(ctx->power)) {
 		dev_err(&dsi->dev, "Couldn't get our power regulator\n");
 		return PTR_ERR(ctx->power);
@@ -451,7 +452,7 @@ static int ili9881c_dsi_probe(struct mipi_dsi_device *dsi)
 	if (ret < 0)
 		return ret;
 
-	dsi->mode_flags = MIPI_DSI_MODE_VIDEO_SYNC_PULSE;
+	dsi->mode_flags = MIPI_DSI_MODE_VIDEO;
 	dsi->format = MIPI_DSI_FMT_RGB888;
 	dsi->lanes = 4;
 

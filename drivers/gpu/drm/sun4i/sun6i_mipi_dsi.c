@@ -723,7 +723,7 @@ static void sun6i_dsi_encoder_enable(struct drm_encoder *encoder)
 	int err;
 
 	DRM_DEBUG_DRIVER("Enabling DSI output\n");
-
+	printk(KERN_NOTICE "BILL: SUN6I_DSI: dsi_encoder_enable entry\n");
 	err = regulator_enable(dsi->regulator);
 	if (err)
 		dev_warn(dsi->dev, "failed to enable VCC-DSI supply: %d\n", err);
@@ -1132,12 +1132,14 @@ static int sun6i_dsi_probe(struct platform_device *pdev)
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	base = devm_ioremap_resource(dev, res);
+	printk(KERN_NOTICE "BILL: SUN6I DSI PROBE: ioremap base = 0x%X \n",base);
 	if (IS_ERR(base)) {
 		dev_err(dev, "Couldn't map the DSI encoder registers\n");
 		return PTR_ERR(base);
 	}
 
 	dsi->regulator = devm_regulator_get(dev, "vcc-dsi");
+	printk(KERN_NOTICE "BILL: SUN6I_DSI: devm_regulator_get\n");
 	if (IS_ERR(dsi->regulator)) {
 		dev_err(dev, "Couldn't get VCC-DSI supply\n");
 		return PTR_ERR(dsi->regulator);

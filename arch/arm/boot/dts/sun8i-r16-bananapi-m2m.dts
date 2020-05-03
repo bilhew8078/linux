@@ -100,7 +100,7 @@
 		compatible = "pwm-backlight";
 		pwms = <&pwm 0 50000 PWM_POLARITY_INVERTED>;
 		brightness-levels = <1 2 4 8 16 32 64 128 255>;
-		default-brightness-level = <32>;
+		default-brightness-level = <8>;
 		enable-gpios = <&r_pio 0 4 GPIO_ACTIVE_HIGH>; /* PG10 */
 	};
 
@@ -109,6 +109,7 @@
 		regulator-name = "panel";
 		regulator-min-microvolt = <3300000>;
 		regulator-max-microvolt = <3300000>;
+		gpio = <&pio 1 7 GPIO_ACTIVE_HIGH>; /* PB07 */
 		enable-active-high;
 	};
 };
@@ -283,6 +284,10 @@
 	regulator-name = "vcc-rtc";
 };
 
+&reg_panel {
+	regulator-always-on;
+	};
+
 &sound {
 	status = "okay";
 };
@@ -338,36 +343,16 @@
 };
 
 &dsi 	{
-	status = "okay";
-	ports {
-		#address-cells = <1>;
-		#size-cells = <0>;
-		dsi_out: port@0 {
-			reg = <0>;
-			dsi_out_panel: endpoint {
-				remote-endpoint = <&panel_out_dsi>;
-			};
-		};
-	};
+		status = "okay";
+		vcc-dsi-supply = <&reg_dcdc1>;
 		panel@0 {
-		compatible = "etouch,jd9365";
-		reg = <0>;
-		reset-gpios = <&r_pio 0 5 GPIO_ACTIVE_LOW>; /* PL05 */
-		dsi-lanes = <4>;
-		width-mm = <94>;
-		height-mm = <151>;
-		video-mode = <0>;
-
-		port {
-			panel_out_dsi: endpoint {
-			remote-endpoint = <&dsi_out_panel>;
-			};
-	};
+			compatible = "etouch,jd9365";  /*"bananapi,lhr050h41", "ilitek,ili9881c";*/
+			reg = <0>;
+			reset-gpios = <&r_pio 0 5 GPIO_ACTIVE_LOW>; /* PL05 */
+			power-supply = <&reg_panel>;
+			backlight = <&pwm_bl>;
+		};
 };
-
-&reg_panel {
-	regulator-always-on;
-	};
 
 &pwm	{
 	pinctrl-names = "default";
