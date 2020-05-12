@@ -4305,7 +4305,7 @@ brcmf_sdio_prepare_fw_request(struct brcmf_sdio *bus)
 		{ ".bin", bus->sdiodev->fw_name },
 		{ ".txt", bus->sdiodev->nvram_name },
 	};
-
+	printk(KERN_NOTICE "BILL-WIFI: nvram_name=%s fw_name=%s\n", fwnames[1].path, fwnames[0].path);
 	fwreq = brcmf_fw_alloc_request(bus->ci->chip, bus->ci->chiprev,
 				       brcmf_sdio_fwnames,
 				       ARRAY_SIZE(brcmf_sdio_fwnames),

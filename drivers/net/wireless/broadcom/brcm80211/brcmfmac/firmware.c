@@ -607,17 +607,19 @@ static int brcmf_fw_request_firmware(const struct firmware **fw,
 		char alt_path[BRCMF_FW_NAME_LEN];
 
 		strlcpy(alt_path, cur->path, BRCMF_FW_NAME_LEN);
+		printk(KERN_NOTICE "BILL-WIFI: cur->path=%s\n", alt_path);
 		/* strip .txt at the end */
 		alt_path[strlen(alt_path) - 4] = 0;
 		strlcat(alt_path, ".", BRCMF_FW_NAME_LEN);
 		strlcat(alt_path, fwctx->req->board_type, BRCMF_FW_NAME_LEN);
 		strlcat(alt_path, ".txt", BRCMF_FW_NAME_LEN);
+		printk(KERN_NOTICE "BILL-WIFI: requested nvram file=%s\n", alt_path);
 
 		ret = request_firmware(fw, alt_path, fwctx->dev);
 		if (ret == 0)
 			return ret;
 	}
-
+	printk(KERN_NOTICE "BILL-WIFI: requested firmware file=%s]n", cur->path);
 	return request_firmware(fw, cur->path, fwctx->dev);
 }
 
@@ -708,7 +710,7 @@ brcmf_fw_alloc_request(u32 chip, u32 chiprev,
 	}
 
 	brcmf_chip_name(chip, chiprev, chipname, sizeof(chipname));
-
+	printk(KERN_NOTICE "BILL-WIFI: alloc_req: chipname=%s\n");
 	if (i == table_size) {
 		brcmf_err("Unknown chip %s\n", chipname);
 		return NULL;
@@ -746,6 +748,7 @@ brcmf_fw_alloc_request(u32 chip, u32 chiprev,
 		strlcat(fwnames[j].path, fwnames[j].extension,
 			BRCMF_FW_NAME_LEN);
 		fwreq->items[j].path = fwnames[j].path;
+		printk(KERN_NOTICE "BILL-WIFI: firmware name %d filename=%s\n",j,fwnames[j].path);
 	}
 
 	return fwreq;
